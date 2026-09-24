@@ -172,6 +172,12 @@ describe('sms-mcp server', () => {
         },
       });
       expect(calls.some((c) => c.path === '/attendance')).toBe(false);
+      expect(r.structuredContent).toMatchObject({
+        draft: {
+          action_ids: [expect.any(String)],
+          summary: expect.stringMatching(/^Mark attendance for Class 6-B/),
+        },
+      });
     });
 
     it('asks back instead of guessing an unknown or ambiguous name', async () => {

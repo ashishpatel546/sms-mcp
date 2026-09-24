@@ -53,12 +53,31 @@ async function draft(
   });
 }
 
-function draftReply(actions: DraftedAction[], summary: string, note?: string) {
+/**
+ * Besides the text for the model, a draft carries `structuredContent.draft`
+ * so an agent host can render its own Confirm / Cancel control without
+ * parsing prose.
+ */
+function draftReply(
+  actions: DraftedAction[],
+  summary: string,
+  note?: string,
+): CallToolResult {
   const ids = actions.map((a) => a.id);
-  return reply(
-    `DRAFT, not saved: ${summary}${note ? ` ${note}` : ''} Read this to the user and ask them to confirm. Only after a clear yes, call confirm_action with action_ids ${JSON.stringify(ids)}; if they decline, call cancel_action.`,
-    { action_ids: ids, expires: actions[0]?.expiresAt },
-  );
+  const preview = `${summary}${note ? ` ${note}` : ''}`;
+  return {
+    ...reply(
+      `DRAFT, not saved: ${preview} Read this to the user and ask them to confirm. Only after a clear yes, call confirm_action with action_ids ${JSON.stringify(ids)}; if they decline, call cancel_action.`,
+      { action_ids: ids, expires: actions[0]?.expiresAt },
+    ),
+    structuredContent: {
+      draft: {
+        action_ids: ids,
+        summary: preview,
+        expires_at: actions[0]?.expiresAt ?? null,
+      },
+    },
+  };
 }
 
 // ── Attendance ─────────────────────────────────────────────────────────────

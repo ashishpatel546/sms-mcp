@@ -65,7 +65,7 @@ Tools accept what people say. The server resolves it and asks back when somethin
 
 ## Human in the loop
 
-1. The model calls `draft_attendance` (or another `draft_*` tool). The server resolves and validates everything, then stores the exact request with sms-backend (`POST /agent/actions`). **Nothing changes yet.** The result is a one-sentence preview written to be read aloud, plus `action_ids`, which expire after 15 minutes.
+1. The model calls `draft_attendance` (or another `draft_*` tool). The server resolves and validates everything, then stores the exact request with sms-backend (`POST /agent/actions`). **Nothing changes yet.** The result is a one-sentence preview written to be read aloud, plus `action_ids`, which expire after 15 minutes. The same draft is also returned as `structuredContent.draft` (`action_ids`, `summary`, `expires_at`), so a host can render its own Confirm and Cancel controls.
 2. The host reads the preview to the user.
 3. Only after the user says yes, `confirm_action` confirms the draft and sends the stored request. The backend executes it once, and only if method, path and body are byte-for-byte what was confirmed.
 
@@ -96,12 +96,14 @@ Choose how strict the confirmation should be:
 ```bash
 npm install
 cp .env.example .env        # set SMS_API_URL
-npm run build && npm start  # HTTP: http://127.0.0.1:4020/mcp
+npm run build && npm start  # HTTP: http://127.0.0.1:4020/mcp (reads ./.env if present)
 npm run dev                 # watch mode
 npm test                    # unit + in-process MCP tests
 ```
 
 The HTTP transport is Streamable HTTP in stateless JSON mode: `POST /mcp` only, plus `GET /healthz`. You can run any number of instances. Each keeps an in-memory context cache per agent session, 5 minutes by default.
+
+**Docker:** `docker build -t sms-mcp . && docker run -p 4020:4020 -e SMS_API_URL=… sms-mcp`. The image listens on `0.0.0.0:4020`. Add the public hostname to `MCP_ALLOWED_HOSTS`, and keep the port private: only the agent host should reach it.
 
 **stdio**, for MCP Inspector or Claude Desktop during development:
 
@@ -119,6 +121,8 @@ MCP_URL=http://127.0.0.1:4020/mcp SMS_AGENT_TOKEN=<agent token> npx tsx scripts/
 It prints the number of tools, the approximate size of their definitions, and the size of each result.
 
 ## Building an agent host (notes)
+
+[sms-agent](../sms-agent) is the agent host for the portal. It already follows the notes below, and it keeps `confirm_action` away from the model entirely: confirmation comes only from a Confirm button or a plain spoken or typed yes.
 
 - Mint the agent token server-side, right after the user signs in, and refresh it before the 30 minutes run out. Pass `{ "readOnly": true }` for sessions that must never change data.
 - Keep the tool list stable within a session and put it first in the prompt, so the model provider's prompt caching applies.

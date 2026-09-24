@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import './env.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SmsApi } from './api.js';
 import { requireAgentClaims } from './claims.js';
