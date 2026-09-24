@@ -18,7 +18,9 @@ const classArg = z
 const dateArg = z
   .string()
   .max(40)
-  .describe('e.g. "today", "yesterday", "Friday", "24 Sep". Default today');
+  .describe(
+    'As the user said it: "today", "yesterday", "Friday", "24 Sep". Pass relative days as words, not a date you computed. Default today',
+  );
 
 interface StudentHit {
   id: number;

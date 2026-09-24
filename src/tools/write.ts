@@ -6,6 +6,7 @@ import { errorReply, nameList, plural, reply } from '../format.js';
 import {
   isSunday,
   matchPerson,
+  addDays,
   parseDate,
   resolveClass,
   resolveLeavePolicy,
@@ -95,7 +96,11 @@ const draftAttendance = defineTool({
     'Prepare attendance for a class-section: everyone present except the students named. Names may be spoken names or roll numbers ("roll 5"). Returns a preview to confirm; nothing is saved until the user confirms.',
   input: {
     class: z.string().max(40).describe('Class-section, e.g. "6B"'),
-    date: z.string().max(40).optional().describe('Default today'),
+    date: z
+      .string()
+      .max(40)
+      .optional()
+      .describe('As the user said it: "today", "yesterday", "24 Sep". Default today'),
     absent: z.array(z.string().max(80)).max(80).optional(),
     late: z.array(z.string().max(80)).max(80).optional(),
     half_day: z.array(z.string().max(80)).max(80).optional(),
@@ -216,7 +221,11 @@ const draftHomework = defineTool({
       .describe('e.g. ["6A","6B"] or ["7"]'),
     subject: z.string().max(60),
     task: z.string().min(3).max(2000).describe('The homework, as given'),
-    date: z.string().max(40).optional().describe('Homework date, default today'),
+    date: z
+      .string()
+      .max(40)
+      .optional()
+      .describe('Homework date as the user said it ("tomorrow", "Monday"). Default today'),
   },
   annotations: DRAFT,
   available: (ctx, claims) => !!ctx.can.setHomework && canWrite(claims),
@@ -275,8 +284,24 @@ const draftLeaveApplication = defineTool({
     "Prepare a leave application for the user themself (leave type like 'casual' or 'CL'). Returns a preview with their balance; nothing is submitted until the user confirms.",
   input: {
     leave_type: z.string().max(40),
-    from: z.string().max(40).describe('First day, e.g. "Friday"'),
-    to: z.string().max(40).optional().describe('Last day; default same day'),
+    from: z
+      .string()
+      .max(40)
+      .describe(
+        'First day as the user said it: "tomorrow", "Friday", "28 Sep". Pass relative days as words, not a date you computed',
+      ),
+    to: z
+      .string()
+      .max(40)
+      .optional()
+      .describe('Last day, same way ("Monday", "day after tomorrow"); default same day'),
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(60)
+      .optional()
+      .describe('Number of days when the user gives a count ("2 din", "3 days") instead of a last day'),
     half_day: z.boolean().optional(),
     reason: z.string().min(3).max(500),
   },
@@ -286,11 +311,16 @@ const draftLeaveApplication = defineTool({
     ctx.me.staffId !== null &&
     ctx.leavePolicies.length > 0 &&
     canWrite(claims),
-  async run({ leave_type, from, to, half_day, reason }, env) {
+  async run({ leave_type, from, to, days, half_day, reason }, env) {
     const { api, ctx } = env;
     const policy = resolveLeavePolicy(ctx, leave_type);
     const fromDate = parseDate(from, ctx.today);
-    const toDate = to ? parseDate(to, ctx.today) : fromDate;
+    // A count ("2 din") is safer than a last day the model worked out.
+    const toDate = days
+      ? addDays(fromDate, days - 1)
+      : to
+        ? parseDate(to, ctx.today)
+        : fromDate;
     if (toDate < fromDate) throw new ResolveError('The leave ends before it starts.');
     if (half_day && toDate !== fromDate) {
       throw new ResolveError('A half-day leave must be a single day.');

@@ -208,6 +208,26 @@ describe('sms-mcp server', () => {
       expect(write.headers['X-School-Slug']).toBe('edusphere');
     });
 
+    it('drafts a leave span from a day count ("parson se 2 din")', async () => {
+      fakeBackend(makeContext(), {
+        'GET /agent/me/leaves': {
+          staffId: 21,
+          balances: [{ policyId: 12, available: 12 }],
+        },
+        'POST /agent/actions': (c: Call) => ({
+          id: '11111111-1111-4111-8111-111111111111',
+          summary: c.body.summary,
+          expiresAt: '2026-09-24T10:15:00Z',
+        }),
+      });
+      const client = await connect(claims());
+      const r = await client.callTool({
+        name: 'draft_leave_application',
+        arguments: { leave_type: 'sick', from: 'parson', days: 2, reason: 'fever' },
+      });
+      expect(text(r)).toContain('on Sat 26 Sep to Sun 27 Sep');
+    });
+
     it('refuses to draft attendance on a Sunday', async () => {
       const client = await connect(claims());
       const r = await client.callTool({
