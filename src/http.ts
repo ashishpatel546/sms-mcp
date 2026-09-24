@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Request, Response } from 'express';
@@ -6,6 +7,14 @@ import { requireAgentClaims, TokenError } from './claims.js';
 import type { Config } from './config.js';
 import { ContextCache } from './context.js';
 import { createSessionServer, SERVER_INFO } from './server.js';
+
+const digest = (v: string) => createHash('sha256').update(v).digest();
+
+/** Constant-time check of the X-MCP-Key header against the shared secret. */
+export function keyMatches(expected: string, given: unknown): boolean {
+  if (!expected) return true;
+  return typeof given === 'string' && timingSafeEqual(digest(given), digest(expected));
+}
 
 function jsonRpcError(res: Response, status: number, message: string) {
   res.status(status).json({
@@ -37,6 +46,9 @@ export function createHttpApp(config: Config) {
   });
 
   app.post('/mcp', async (req: Request, res: Response) => {
+    if (!keyMatches(config.sharedSecret, req.headers['x-mcp-key'])) {
+      return jsonRpcError(res, 401, 'Unknown caller.');
+    }
     const header = req.headers.authorization ?? '';
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
     if (!token) {

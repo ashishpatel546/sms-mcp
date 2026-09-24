@@ -15,6 +15,12 @@ export interface Config {
    * (a button in the app) can hide it, so the model can never confirm alone.
    */
   exposeConfirmTool: boolean;
+  /**
+   * When set, every HTTP request must carry it in `X-MCP-Key`, so only the
+   * agent host (sms-agent) can reach this server — on top of the per-user
+   * agent token that sms-backend verifies on every call.
+   */
+  sharedSecret: string;
   /** stdio mode only: an agent token, or a user token to exchange for one. */
   stdioAgentToken?: string;
   stdioUserToken?: string;
@@ -47,6 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     contextTtlMs: int(env.MCP_CONTEXT_TTL_SECONDS, 300) * 1000,
     requestTimeoutMs: int(env.MCP_REQUEST_TIMEOUT_MS, 20_000),
     exposeConfirmTool: bool(env.MCP_EXPOSE_CONFIRM_TOOL, true),
+    sharedSecret: env.MCP_SHARED_SECRET ?? '',
     stdioAgentToken: env.SMS_AGENT_TOKEN || undefined,
     stdioUserToken: env.SMS_USER_TOKEN || undefined,
     stdioSchoolSlug: env.SMS_SCHOOL_SLUG || undefined,

@@ -101,6 +101,14 @@ npm run dev                 # watch mode
 npm test                    # unit + in-process MCP tests
 ```
 
+**Who can call it.** Three layers protect it:
+
+1. It binds to `127.0.0.1` by default and must never be published, whether through the Cloudflare tunnel or a public load balancer.
+2. When `MCP_SHARED_SECRET` is set, every request must carry the same value in `X-MCP-Key`. sms-agent sends it as `SMS_MCP_KEY`, and the comparison is constant-time.
+3. Every call still needs the user's agent token, which sms-backend verifies.
+
+Across hosts, put TLS in front of it (HTTPS on a private network).
+
 The HTTP transport is Streamable HTTP in stateless JSON mode: `POST /mcp` only, plus `GET /healthz`. You can run any number of instances. Each keeps an in-memory context cache per agent session, 5 minutes by default.
 
 **Docker:** `docker build -t sms-mcp . && docker run -p 4020:4020 -e SMS_API_URL=… sms-mcp`. The image listens on `0.0.0.0:4020`. Add the public hostname to `MCP_ALLOWED_HOSTS`, and keep the port private: only the agent host should reach it.
