@@ -11,7 +11,11 @@ export const ALL_TOOLS: ToolDef[] = [...READ_TOOLS, ...WRITE_TOOLS];
 
 export const SERVER_INFO = { name: 'sms-mcp', version: '0.1.0' };
 
-function instructions(schoolName: string | undefined, writes: boolean) {
+function instructions(
+  schoolName: string | undefined,
+  writes: boolean,
+  modelConfirms: boolean,
+) {
   const lines = [
     `Tools for staff of ${schoolName ?? 'the school'} (school management system).`,
     'Pass things as the user says them — classes like "6B", students by name, dates like "Friday"; the server resolves them and asks back if ambiguous.',
@@ -20,7 +24,9 @@ function instructions(schoolName: string | undefined, writes: boolean) {
   ];
   if (writes) {
     lines.push(
-      'Changes are two-step: a draft_* tool returns a preview and action_ids; read the preview to the user and call confirm_action only after they clearly agree. Never say a change is done until confirm_action reports "Done".',
+      modelConfirms
+        ? 'Changes are two-step: a draft_* tool returns a preview and action_ids; read the preview to the user and call confirm_action only after they clearly agree. Never say a change is done until confirm_action reports "Done".'
+        : 'Changes are two-step: a draft_* tool returns a preview; the user confirms or cancels it in the app (or by saying yes or no). Never say a change is done unless told "Done".',
     );
   }
   return lines.join('\n');
@@ -53,7 +59,7 @@ export async function createSessionServer({
   const ctx = await contexts.get(claims.agentSessionId ?? token, api);
 
   const server = new McpServer(SERVER_INFO, {
-    instructions: instructions(ctx.school.name, canWrite(claims)),
+    instructions: instructions(ctx.school.name, canWrite(claims), config.exposeConfirmTool),
   });
 
   for (const tool of ALL_TOOLS) {

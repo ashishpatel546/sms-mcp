@@ -250,7 +250,7 @@ const classAttendance = defineTool({
   available: (ctx) => !!ctx.can.viewAttendance,
   async run({ class: cls, date }, { api, ctx }) {
     const ref = resolveClass(ctx, cls, true);
-    const day = parseDate(date, ctx.today);
+    const day = parseDate(date, ctx.today, 'past');
     const a = await api.get<Record<string, any>>('/agent/attendance/class', {
       query: { classId: ref.classId, sectionId: ref.sectionId, date: day },
       tool: 'class_attendance',
@@ -282,7 +282,7 @@ const attendanceRegister = defineTool({
   annotations: READ,
   available: (ctx) => !!ctx.can.viewAttendance,
   async run({ date, pending_only }, { api, ctx }) {
-    const day = parseDate(date, ctx.today);
+    const day = parseDate(date, ctx.today, 'past');
     const r = await api.get<Record<string, any>>('/agent/attendance/register', {
       query: { date: day, pendingOnly: pending_only },
       tool: 'attendance_register',
@@ -327,8 +327,8 @@ const lowAttendance = defineTool({
       query: {
         threshold,
         ...classQuery(ref),
-        from: from ? parseDate(from, ctx.today) : undefined,
-        to: to ? parseDate(to, ctx.today) : undefined,
+        from: from ? parseDate(from, ctx.today, 'past') : undefined,
+        to: to ? parseDate(to, ctx.today, 'past') : undefined,
         limit: limit ?? 20,
       },
       tool: 'low_attendance',
@@ -375,7 +375,7 @@ const staffAttendance = defineTool({
   annotations: READ,
   available: (ctx) => !!ctx.can.viewStaffAttendanceSummary,
   async run({ date }, { api, ctx }) {
-    const day = parseDate(date, ctx.today);
+    const day = parseDate(date, ctx.today, 'past');
     const r = await api.get<Record<string, any>>('/agent/staff/attendance', {
       query: { date: day },
       tool: 'staff_attendance',
@@ -489,8 +489,8 @@ const homeworkList = defineTool({
         query: {
           ...classQuery(ref),
           mine,
-          from: from ? parseDate(from, ctx.today) : undefined,
-          to: to ? parseDate(to, ctx.today) : undefined,
+          from: from ? parseDate(from, ctx.today, 'past') : undefined,
+          to: to ? parseDate(to, ctx.today, 'past') : undefined,
         },
         tool: 'homework_list',
       },
@@ -556,7 +556,7 @@ const myAttendance = defineTool({
       .describe('YYYY-MM'),
   },
   annotations: READ,
-  available: (ctx) => !!ctx.can.selfServiceHr && ctx.me.staffId !== null,
+  available: (ctx) => !!ctx.can.selfServiceAttendance && ctx.me.staffId !== null,
   async run({ month }, { api }) {
     const r = await api.get<Record<string, any>>('/agent/me/attendance', {
       query: { month },

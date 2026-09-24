@@ -32,6 +32,7 @@ export function makeContext(over: Partial<SchoolContext> = {}): SchoolContext {
       viewStaffAttendanceNames: false,
       approveStaffLeave: false,
       selfServiceHr: true,
+      selfServiceAttendance: true,
       viewUsageBreakdown: false,
     },
     classes: [

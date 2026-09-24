@@ -103,11 +103,13 @@ describe('sms-mcp server', () => {
 
     it('can leave confirmation to the host UI', async () => {
       fakeBackend(makeContext());
-      const tools = (
-        await (await connect(claims(), { MCP_EXPOSE_CONFIRM_TOOL: 'false' })).listTools()
-      ).tools.map((t) => t.name);
+      const client = await connect(claims(), { MCP_EXPOSE_CONFIRM_TOOL: 'false' });
+      const tools = (await client.listTools()).tools.map((t) => t.name);
       expect(tools).toContain('draft_attendance');
       expect(tools).not.toContain('confirm_action');
+      expect(tools).not.toContain('cancel_action');
+      expect(client.getInstructions()).not.toContain('confirm_action');
+      expect(client.getInstructions()).toContain('confirms or cancels it in the app');
     });
 
     it('marks reads read-only and confirm as destructive', async () => {

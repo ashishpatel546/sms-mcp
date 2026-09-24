@@ -59,17 +59,23 @@ async function draft(
  * parsing prose.
  */
 function draftReply(
+  env: ToolEnv,
   actions: DraftedAction[],
   summary: string,
   note?: string,
 ): CallToolResult {
   const ids = actions.map((a) => a.id);
   const preview = `${summary}${note ? ` ${note}` : ''}`;
+  // When the host confirms through its own UI, the model is not told about
+  // confirm/cancel tools it cannot see.
+  const next = env.config.exposeConfirmTool
+    ? `Read this to the user and ask them to confirm. Only after a clear yes, call confirm_action with action_ids ${JSON.stringify(ids)}; if they decline, call cancel_action.`
+    : 'Tell the user what will happen and ask them to confirm. They confirm or cancel in the app, or by answering yes or no. Do not say it is done.';
   return {
-    ...reply(
-      `DRAFT, not saved: ${preview} Read this to the user and ask them to confirm. Only after a clear yes, call confirm_action with action_ids ${JSON.stringify(ids)}; if they decline, call cancel_action.`,
-      { action_ids: ids, expires: actions[0]?.expiresAt },
-    ),
+    ...reply(`DRAFT, not saved: ${preview} ${next}`, {
+      action_ids: ids,
+      expires: actions[0]?.expiresAt,
+    }),
     structuredContent: {
       draft: {
         action_ids: ids,
@@ -86,7 +92,7 @@ const draftAttendance = defineTool({
   name: 'draft_attendance',
   title: 'Draft class attendance',
   description:
-    'Prepare attendance for a class-section: everyone present except the students named. Names may be spoken names or roll numbers ("roll 5"). Returns a preview to confirm; nothing is saved until confirm_action.',
+    'Prepare attendance for a class-section: everyone present except the students named. Names may be spoken names or roll numbers ("roll 5"). Returns a preview to confirm; nothing is saved until the user confirms.',
   input: {
     class: z.string().max(40).describe('Class-section, e.g. "6B"'),
     date: z.string().max(40).optional().describe('Default today'),
@@ -99,7 +105,7 @@ const draftAttendance = defineTool({
   available: (ctx, claims) => !!ctx.can.markAttendance && canWrite(claims),
   async run(args, env) {
     const { api, ctx } = env;
-    const day = parseDate(args.date, ctx.today);
+    const day = parseDate(args.date, ctx.today, 'past');
     if (day > ctx.today) {
       throw new ResolveError('Attendance cannot be marked for a future date.');
     }
@@ -191,7 +197,7 @@ const draftAttendance = defineTool({
         students,
       },
     });
-    return draftReply([action], summary, overwrite);
+    return draftReply(env, [action], summary, overwrite);
   },
 });
 
@@ -201,7 +207,7 @@ const draftHomework = defineTool({
   name: 'draft_homework',
   title: 'Draft homework',
   description:
-    'Prepare homework for one or more classes. A class without a section ("6") means all its sections. Returns a preview to confirm; nothing is sent until confirm_action.',
+    'Prepare homework for one or more classes. A class without a section ("6") means all its sections. Returns a preview to confirm; nothing is sent until the user confirms.',
   input: {
     classes: z
       .array(z.string().max(40))
@@ -256,7 +262,7 @@ const draftHomework = defineTool({
         }),
       );
     }
-    return draftReply(actions, summary);
+    return draftReply(env, actions, summary);
   },
 });
 
@@ -266,7 +272,7 @@ const draftLeaveApplication = defineTool({
   name: 'draft_leave_application',
   title: 'Draft my leave application',
   description:
-    "Prepare a leave application for the user themself (leave type like 'casual' or 'CL'). Returns a preview with their balance; nothing is submitted until confirm_action.",
+    "Prepare a leave application for the user themself (leave type like 'casual' or 'CL'). Returns a preview with their balance; nothing is submitted until the user confirms.",
   input: {
     leave_type: z.string().max(40),
     from: z.string().max(40).describe('First day, e.g. "Friday"'),
@@ -311,7 +317,7 @@ const draftLeaveApplication = defineTool({
         reason,
       },
     });
-    return draftReply([action], summary);
+    return draftReply(env, [action], summary);
   },
 });
 
@@ -348,7 +354,7 @@ const draftCancelMyLeave = defineTool({
       method: 'PATCH',
       path: `/hr/staff-leaves/${request_id}/cancel`,
     });
-    return draftReply([action], summary);
+    return draftReply(env, [action], summary);
   },
 });
 
@@ -378,7 +384,7 @@ const draftLeaveDecision = defineTool({
   name: 'draft_leave_decision',
   title: 'Draft a leave approval or rejection',
   description:
-    'Prepare approving or rejecting a pending leave request (id and kind from pending_leaves). Rejection needs a reason. Nothing changes until confirm_action.',
+    'Prepare approving or rejecting a pending leave request (id and kind from pending_leaves). Rejection needs a reason. Nothing changes until the user confirms.',
   input: {
     request_id: z.number().int().positive(),
     kind: z.enum(['student', 'staff']),
@@ -418,7 +424,7 @@ const draftLeaveDecision = defineTool({
           path: `/leaves/${request_id}/reject`,
           body: { rejectionReason: reason },
         });
-        return draftReply([action], summary);
+        return draftReply(env, [action], summary);
       }
       const final = leave.next === 'second-approve';
       if (final && !ctx.can.finalApproveStudentLeave) {
@@ -429,7 +435,7 @@ const draftLeaveDecision = defineTool({
         method: 'PATCH',
         path: `/leaves/${request_id}/${leave.next}`,
       });
-      return draftReply([action], summary);
+      return draftReply(env, [action], summary);
     }
 
     const leave = pending.staff?.requests.find((l) => l.id === request_id);
@@ -448,7 +454,7 @@ const draftLeaveDecision = defineTool({
       path: `/hr/staff-leaves/${request_id}/${decision}`,
       body: decision === 'reject' && reason ? { rejectionReason: reason } : undefined,
     });
-    return draftReply([action], summary);
+    return draftReply(env, [action], summary);
   },
 });
 
@@ -519,7 +525,8 @@ const cancelAction = defineTool({
     idempotentHint: true,
     openWorldHint: false,
   },
-  available: (_ctx, claims) => canWrite(claims),
+  // With host-side confirmation, discarding is the host's job too.
+  available: (_ctx, claims, config) => config.exposeConfirmTool && canWrite(claims),
   async run({ action_ids }, env): Promise<CallToolResult> {
     for (const id of action_ids) {
       await env.api.post(`/agent/actions/${id}/cancel`, { tool: 'cancel_action' });

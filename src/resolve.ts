@@ -210,9 +210,33 @@ function validDate(y: number, m: number, d: number): string | null {
  * "24/09", "24-09-2026", "3 days ago", "in 2 weeks" → YYYY-MM-DD, relative to the school's today.
  * Day-first for numeric dates, as written in India.
  */
-export function parseDate(text: string | undefined, today: string): string {
+/** Hindi day words, as spoken or transcribed (Latin and Devanagari). */
+const HINDI_DAYS: Record<string, 0 | 1 | 2> = {
+  aaj: 0, aj: 0, आज: 0,
+  kal: 1, kl: 1, कल: 1,
+  parso: 2, parson: 2, parsoon: 2, परसों: 2, परसो: 2,
+};
+
+/**
+ * @param lean Which way "kal" / "parson" point — they mean both tomorrow and
+ *   yesterday in Hindi. Tools about what already happened (attendance
+ *   taken, homework given) pass `past`; plans, leave and the calendar use
+ *   the default `future`.
+ */
+export function parseDate(
+  text: string | undefined,
+  today: string,
+  lean: 'future' | 'past' = 'future',
+): string {
   if (!text || !text.trim()) return today;
-  const t = text.trim().toLowerCase().replace(/,/g, ' ').replace(/\s+/g, ' ');
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/ (se|ko|tak|ka|ki|ke|wala|wale|waala)$/, '');
+  const hindi = HINDI_DAYS[t];
+  if (hindi !== undefined) return addDays(today, lean === 'past' ? -hindi : hindi);
   if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
     const [y, m, d] = t.slice(0, 10).split('-').map(Number);
     const ok = validDate(y!, m!, d!);

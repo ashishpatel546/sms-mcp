@@ -75,6 +75,18 @@ describe('parseDate (today is Thu 24 Sep 2026)', () => {
     expect(parseDate(said, TODAY)).toBe(iso);
   });
 
+  it.each([
+    ['aaj', 'future', TODAY],
+    ['kal', 'future', '2026-09-25'],
+    ['kal', 'past', '2026-09-23'],
+    ['Kal se', 'future', '2026-09-25'],
+    ['parson', 'future', '2026-09-26'],
+    ['परसों', 'past', '2026-09-22'],
+    ['कल', 'future', '2026-09-25'],
+  ] as const)('Hindi %s (%s) → %s', (said, lean, iso) => {
+    expect(parseDate(said, TODAY, lean)).toBe(iso);
+  });
+
   it('rejects impossible or unclear dates', () => {
     expect(() => parseDate('31/02', TODAY)).toThrow(ResolveError);
     expect(() => parseDate('someday', TODAY)).toThrow(ResolveError);
