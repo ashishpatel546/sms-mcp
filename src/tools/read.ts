@@ -2,8 +2,11 @@ import { z } from 'zod';
 import { nameList, plural, reply } from '../format.js';
 import {
   parseDate,
+  PERIODS,
+  periodRange,
   resolveClass,
   ResolveError,
+  resolveSubject,
   spokenDate,
   type ClassRef,
 } from '../resolve.js';
@@ -21,6 +24,19 @@ const dateArg = z
   .describe(
     'As the user said it: "today", "yesterday", "Friday", "24 Sep". Pass relative days as words, not a date you computed. Default today',
   );
+
+/**
+ * Headcount sentence for a day's register summary. Spells out present and
+ * enrolled totals so the model never has to add up per-class strengths —
+ * doing so it once reported class sizes as students who came.
+ */
+function headcount(s: Record<string, any>): string {
+  const enrolled = `${s.students} students enrolled`;
+  if (!s.taken) return `no attendance marked yet, so present count is unknown (${enrolled})`;
+  const came = (s.present ?? 0) + (s.late ?? 0) + (s.halfDay ?? 0);
+  const rest = s.pending ? `; ${plural(s.pending, 'class', 'classes')} not marked yet` : '';
+  return `${came} present, ${s.absent ?? 0} absent, ${s.leave ?? 0} on leave in the marked classes (${s.percentage}% present)${rest}; ${enrolled}`;
+}
 
 interface StudentHit {
   id: number;
@@ -138,7 +154,7 @@ const dailyBriefing = defineTool({
     const sa = b.studentAttendance;
     if (sa) {
       parts.push(
-        `${sa.taken} of ${sa.totalRegisters} attendance registers taken${sa.taken ? `, ${sa.percentage}% present` : ''}`,
+        `students: ${sa.taken} of ${sa.totalRegisters} class registers taken, ${headcount(sa)}`,
       );
       if (sa.pendingClasses?.length > 15) {
         const n = sa.pendingClasses.length;
@@ -276,7 +292,7 @@ const attendanceRegister = defineTool({
   name: 'attendance_register',
   title: 'Attendance register (all classes)',
   description:
-    'For a day, every class-section: taken or pending, present/absent counts, who took it. Use pending_only to list classes still to mark.',
+    "For a day, every class-section: taken or pending, present/absent counts, who took it. Use pending_only to list classes still to mark. For 'how many students came', quote the first line's totals; `enrolled` is class size, not attendance.",
   input: {
     date: dateArg.optional(),
     pending_only: z.boolean().optional(),
@@ -292,13 +308,13 @@ const attendanceRegister = defineTool({
     const s = r.summary;
     const head = r.isSunday
       ? `${spokenDate(day)} is a Sunday.`
-      : `${spokenDate(day)}: ${s.taken} of ${s.totalRegisters} registers taken, ${s.pending} pending${s.taken ? `; ${s.percentage}% present (${s.absent} absent)` : ''}.`;
+      : `${spokenDate(day)}: ${s.taken} of ${s.totalRegisters} class registers taken; ${headcount(s)}.`;
     return reply(
       head,
       (r.registers as Record<string, unknown>[]).map((x) => ({
         class: x.class,
         taken: x.marked,
-        strength: x.strength,
+        enrolled: x.strength,
         present: x.marked ? x.present : null,
         absent: x.marked ? x.absent : null,
         pct: x.percentage,
@@ -599,19 +615,203 @@ const assistantUsage = defineTool({
   },
 });
 
+const schoolOverview = defineTool({
+  name: 'school_overview',
+  title: 'School head counts',
+  description:
+    "How many students (total, boys/girls, per class-section), staff (by designation) and classes the school has. Use for any 'how many students/teachers/classes' question. There is no separate teacher count: for teachers, give the staff by designation.",
+  input: {},
+  annotations: READ,
+  available: (ctx) => !!ctx.can.viewStudents,
+  async run(_args, { api }) {
+    const r = await api.get<Record<string, any>>('/agent/overview', {
+      tool: 'school_overview',
+    });
+    const roles = (r.staffByRole as { role: string; count: number }[])
+      .map((x) => `${x.count} ${x.role}`)
+      .join(', ');
+    const gap =
+      r.enrolledThisSession != null && r.enrolledThisSession !== r.students
+        ? ` (${r.enrolledThisSession} enrolled in a class this session)`
+        : '';
+    return reply(
+      `${r.students} students${gap}: ${r.boys} boys, ${r.girls} girls; ${r.staff} staff in all${roles ? `, by designation: ${roles}` : ''}; ${plural(r.classes, 'class', 'classes')} in ${plural(r.byClass.length, 'class-section')}.`,
+      { byClass: r.byClass },
+    );
+  },
+});
+
+const classInfo = defineTool({
+  name: 'class_info',
+  title: 'Class details',
+  description:
+    "A class-section's class teacher, subject teachers, strength (boys/girls) and, with students=true, the full roll list.",
+  input: {
+    class: classArg,
+    students: z.boolean().optional().describe('Also list the students'),
+  },
+  annotations: READ,
+  available: (ctx) => !!ctx.can.viewStudents,
+  async run({ class: cls, students }, { api, ctx }) {
+    const ref = resolveClass(ctx, cls, true);
+    const r = await api.get<Record<string, any>>('/agent/class', {
+      query: { classId: ref.classId, sectionId: ref.sectionId, students },
+      tool: 'class_info',
+    });
+    return reply(
+      `${r.class}: ${plural(r.strength, 'student')} (${r.boys} boys, ${r.girls} girls); class teacher ${r.classTeacher ?? 'not assigned'}.`,
+      {
+        subjectTeachers: r.subjects.length ? r.subjects : 'none assigned',
+        students: r.students,
+      },
+    );
+  },
+});
+
+const attendanceTrend = defineTool({
+  name: 'attendance_trend',
+  title: 'Attendance over a period',
+  description:
+    "Student attendance day by day over a range (default last 7 days, max 2 months) for the school or a class — for 'this week', 'last month', 'kal kitne aaye'.",
+  input: {
+    period: z.enum(PERIODS).optional().describe('Use for "is hafte", "pichle mahine" etc. instead of from/to'),
+    from: dateArg.optional(),
+    to: dateArg.optional(),
+    class: classArg.optional(),
+  },
+  annotations: READ,
+  available: (ctx) => !!ctx.can.viewAttendance,
+  async run({ period, from, to, class: cls }, { api, ctx }) {
+    const ref = cls ? resolveClass(ctx, cls) : undefined;
+    const [f, t] = period
+      ? periodRange(period, ctx.today)
+      : [
+          from ? parseDate(from, ctx.today, 'past') : undefined,
+          to ? parseDate(to, ctx.today, 'past') : undefined,
+        ];
+    const r = await api.get<Record<string, any>>('/agent/attendance/trend', {
+      query: { ...classQuery(ref), from: f, to: t },
+      tool: 'attendance_trend',
+    });
+    const head = r.daysMarked
+      ? `${r.scope}, ${spokenDate(r.from)} to ${spokenDate(r.to)}: ${r.percentage}% present over ${plural(r.daysMarked, 'day')} with attendance marked${r.daysNotMarked ? `; ${plural(r.daysNotMarked, 'working day')} with nothing marked` : ''}.`
+      : `${r.scope}, ${spokenDate(r.from)} to ${spokenDate(r.to)}: no attendance marked on any day, so there are no figures.`;
+    return reply(head, r.daysMarked ? r.days : undefined);
+  },
+});
+
+const examResults = defineTool({
+  name: 'exam_results',
+  title: 'Exam results',
+  description:
+    'Results of one exam for a class, a class-section or the whole school: average, subject averages, failures, toppers. Default: the latest exam with marks this session.',
+  input: {
+    class: classArg.optional(),
+    exam: z.string().max(60).optional().describe('Exam name as said, e.g. "SA1", "half yearly"'),
+    subject: z.string().max(40).optional(),
+  },
+  annotations: READ,
+  available: (ctx) => !!ctx.can.viewExams,
+  async run({ class: cls, exam, subject }, { api, ctx }) {
+    const ref = cls ? resolveClass(ctx, cls) : undefined;
+    let subjectId: number | undefined;
+    if (subject) {
+      const name = resolveSubject(ctx, subject);
+      subjectId = ctx.subjects.find((s) => s.name === name)?.id;
+      if (subjectId === undefined) {
+        throw new ResolveError(`No subject matches "${subject}".`);
+      }
+    }
+    const r = await api.get<Record<string, any>>('/agent/exams/results', {
+      query: { ...classQuery(ref), exam, subjectId },
+      tool: 'exam_results',
+    });
+    if (!r.exam) {
+      return reply(`${r.scope}: no exam marks entered this session (${r.session}).`);
+    }
+    const others = (r.exams as string[]).filter((e) => e !== r.exam);
+    return reply(
+      `${r.exam}, ${r.scope}: ${plural(r.students, 'student')} with marks, average ${r.average}%; ${r.studentsWithAFail} failed at least one subject.${others.length ? ` Other exams with marks: ${others.join(', ')}.` : ''}`,
+      { subjects: r.subjects, classes: r.classes, top: r.top, failed: r.failed },
+    );
+  },
+});
+
+const onLeave = defineTool({
+  name: 'on_leave',
+  title: 'Who is on leave',
+  description:
+    'Students (and staff, for admins) on approved leave on a day, optionally for one class.',
+  input: { date: dateArg.optional(), class: classArg.optional() },
+  annotations: READ,
+  available: (ctx) =>
+    !!(ctx.can.viewStudentLeaves || ctx.can.viewStaffAttendanceSummary),
+  async run({ date, class: cls }, { api, ctx }) {
+    const ref = cls ? resolveClass(ctx, cls) : undefined;
+    const day = parseDate(date, ctx.today);
+    const r = await api.get<Record<string, any>>('/agent/leaves/on', {
+      query: { ...classQuery(ref), date: day },
+      tool: 'on_leave',
+    });
+    const parts: string[] = [];
+    if (r.students) {
+      parts.push(
+        `${plural(r.students.approved, 'student')} on approved leave${ref ? ` in ${ref.label}` : ''}${r.students.pendingApproval ? ` (${plural(r.students.pendingApproval, 'more request')} not yet approved)` : ''}`,
+      );
+    }
+    if (r.staff) parts.push(`${plural(r.staff.approved, 'staff member', 'staff members')} on leave`);
+    return reply(`${spokenDate(day)}: ${parts.join('; ')}.`, {
+      students: r.students?.list,
+      staff: r.staff?.list,
+    });
+  },
+});
+
+const circulars = defineTool({
+  name: 'circulars',
+  title: 'Circulars and notices',
+  description:
+    'Recent school circulars/notices, newest first, optionally matching words (e.g. "holiday", "PTM").',
+  input: {
+    search: z.string().max(100).optional(),
+    limit: z.number().int().min(1).max(20).optional(),
+  },
+  annotations: READ,
+  available: () => true,
+  async run({ search, limit }, { api }) {
+    const r = await api.get<{ more: boolean; circulars: unknown[] }>(
+      '/agent/circulars',
+      { query: { q: search, limit: limit ?? 5 }, tool: 'circulars' },
+    );
+    const n = r.circulars.length;
+    return reply(
+      n
+        ? `${r.more ? 'Latest ' : ''}${plural(n, 'circular')}${search ? ` matching "${search}"` : ''}.`
+        : `No circulars${search ? ` matching "${search}"` : ''}.`,
+      r.circulars,
+    );
+  },
+});
+
 export const READ_TOOLS = [
   dailyBriefing,
+  schoolOverview,
   findStudents,
+  classInfo,
   studentProfile,
   classAttendance,
   attendanceRegister,
+  attendanceTrend,
   lowAttendance,
   findStaff,
   staffAttendance,
   pendingLeaves,
+  onLeave,
   feeStatus,
+  examResults,
   homeworkList,
   schoolCalendar,
+  circulars,
   myLeaves,
   myAttendance,
   assistantUsage,

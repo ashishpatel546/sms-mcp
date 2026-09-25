@@ -294,6 +294,28 @@ export function parseDate(
   );
 }
 
+export const PERIODS = ['this week', 'last week', 'this month', 'last month'] as const;
+export type Period = (typeof PERIODS)[number];
+
+/** A named period → [first, last] day, weeks Monday to Sunday, never past today. */
+export function periodRange(period: Period, today: string): [string, string] {
+  const dow = (utc(today).getUTCDay() + 6) % 7; // Monday = 0
+  const monday = addDays(today, -dow);
+  const first = `${today.slice(0, 8)}01`;
+  switch (period) {
+    case 'this week':
+      return [monday, today];
+    case 'last week':
+      return [addDays(monday, -7), addDays(monday, -1)];
+    case 'this month':
+      return [first, today];
+    case 'last month': {
+      const end = addDays(first, -1);
+      return [`${end.slice(0, 8)}01`, end];
+    }
+  }
+}
+
 /** "Thu 24 Sep" — how dates are read back to the user. */
 export function spokenDate(date: string): string {
   const d = utc(date);
