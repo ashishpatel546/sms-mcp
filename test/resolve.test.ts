@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   matchPerson,
   parseDate,
+  periodRange,
   resolveClass,
   resolveLeavePolicy,
   ResolveError,
@@ -143,5 +144,23 @@ describe('matchPerson', () => {
 
   it('reports no match', () => {
     expect(matchPerson(roster, 'Zoya').kind).toBe('none');
+  });
+});
+
+describe('periodRange', () => {
+  // TODAY is Thu 24 Sep 2026.
+  it('gives weeks Monday to Sunday, never past today', () => {
+    expect(periodRange('this week', TODAY)).toEqual(['2026-09-21', '2026-09-24']);
+    expect(periodRange('last week', TODAY)).toEqual(['2026-09-14', '2026-09-20']);
+  });
+
+  it('gives calendar months', () => {
+    expect(periodRange('this month', TODAY)).toEqual(['2026-09-01', '2026-09-24']);
+    expect(periodRange('last month', TODAY)).toEqual(['2026-08-01', '2026-08-31']);
+    expect(periodRange('last month', '2026-01-10')).toEqual(['2025-12-01', '2025-12-31']);
+  });
+
+  it('treats Sunday as the end of its week', () => {
+    expect(periodRange('this week', '2026-09-27')).toEqual(['2026-09-21', '2026-09-27']);
   });
 });

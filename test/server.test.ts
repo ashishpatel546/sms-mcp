@@ -239,6 +239,157 @@ describe('sms-mcp server', () => {
     });
   });
 
+  describe('attendance headcount', () => {
+    const summary = {
+      totalRegisters: 28, taken: 0, pending: 28, students: 105,
+      present: 0, absent: 0, late: 0, halfDay: 0, leave: 0, percentage: 0,
+    };
+    const rows = [{ class: '1-A', marked: false, strength: 4, dayType: 'WORKING' }];
+
+    it('says nobody is counted present when no register is taken', async () => {
+      fakeBackend(makeContext(), {
+        'GET /agent/attendance/register': { isSunday: false, summary, registers: rows },
+      });
+      const r = await (await connect(claims())).callTool({ name: 'attendance_register', arguments: {} });
+      const first = text(r).split('\n')[0]!;
+      expect(first).toContain('0 of 28 class registers taken');
+      expect(first).toContain('no attendance marked yet, so present count is unknown (105 students enrolled)');
+      expect(text(r)).not.toContain('strength');
+    });
+
+    it('gives present, absent and enrolled totals once registers are taken', async () => {
+      fakeBackend(makeContext(), {
+        'GET /agent/briefing': {
+          studentAttendance: {
+            ...summary, taken: 3, pending: 25, present: 10, late: 1, absent: 2, leave: 1, percentage: 85,
+          },
+        },
+      });
+      const r = await (await connect(claims())).callTool({ name: 'daily_briefing', arguments: {} });
+      expect(text(r)).toContain(
+        'students: 3 of 28 class registers taken, 11 present, 2 absent, 1 on leave in the marked classes (85% present); 25 classes not marked yet; 105 students enrolled',
+      );
+    });
+  });
+
+  describe('head counts and other basic questions', () => {
+    const call = async (name: string, args: Record<string, unknown>, routes: Record<string, unknown>, ctx = makeContext()) => {
+      const calls = fakeBackend(ctx, routes);
+      const r = await (await connect(claims())).callTool({ name, arguments: args });
+      return { r, calls };
+    };
+
+    it('lists the new read tools only for users who may use them', async () => {
+      fakeBackend(makeContext());
+      const tools = (await (await connect(claims())).listTools()).tools.map((t) => t.name);
+      for (const t of ['school_overview', 'class_info', 'attendance_trend', 'exam_results', 'on_leave', 'circulars']) {
+        expect(tools).toContain(t);
+      }
+      const guard = makeContext();
+      guard.can = Object.fromEntries(Object.keys(guard.can).map((k) => [k, false]));
+      fakeBackend(guard);
+      const guardTools = (await (await connect(claims({ role: 'GUARD' }))).listTools()).tools.map((t) => t.name);
+      expect(guardTools).toContain('circulars');
+      for (const t of ['school_overview', 'class_info', 'attendance_trend', 'exam_results', 'on_leave']) {
+        expect(guardTools).not.toContain(t);
+      }
+    });
+
+    it('states the student total instead of leaving it to be added up', async () => {
+      const { r } = await call('school_overview', {}, {
+        'GET /agent/overview': {
+          students: 105, enrolledThisSession: 105, boys: 54, girls: 51, staff: 7, classes: 15, sections: 2,
+          byClass: [{ class: 'Class 6-B', enrolled: 7, boys: 2, girls: 5 }],
+          staffByRole: [{ role: 'Teacher', count: 7 }],
+        },
+      });
+      expect(text(r).split('\n')[0]).toBe('105 students: 54 boys, 51 girls; 7 staff in all, by designation: 7 Teacher; 15 classes in 1 class-section.');
+    });
+
+    it('says when enrolments and accounts disagree', async () => {
+      const { r } = await call('school_overview', {}, {
+        'GET /agent/overview': {
+          students: 105, enrolledThisSession: 101, boys: 50, girls: 51, staff: 7, classes: 15, sections: 2,
+          byClass: [], staffByRole: [],
+        },
+      });
+      expect(text(r)).toContain('105 students (101 enrolled in a class this session)');
+    });
+
+    it('resolves the class for class_info and names the class teacher', async () => {
+      const { r, calls } = await call('class_info', { class: '6B', students: true }, {
+        'GET /agent/class': {
+          class: 'Class 6-B', classTeacher: 'Sandhya Kumari', strength: 7, boys: 2, girls: 5,
+          subjects: [{ subject: 'Maths', teacher: 'Suman Gupta' }],
+          students: [{ id: 1, rollNo: 1, name: 'Riya Sharma' }],
+        },
+      });
+      expect(calls.find((c) => c.path === '/agent/class')!.query).toMatchObject({ classId: '9', sectionId: '2', students: 'true' });
+      expect(text(r)).toMatch(/^Class 6-B: 7 students \(2 boys, 5 girls\); class teacher Sandhya Kumari\./);
+      expect(text(r)).toContain('Riya Sharma');
+    });
+
+    it('turns a named period into a date range', async () => {
+      const { calls } = await call('attendance_trend', { period: 'this week', class: '6B' }, {
+        'GET /agent/attendance/trend': {
+          scope: 'Class 6-B', from: '2026-09-21', to: '2026-09-24', daysMarked: 2, daysNotMarked: 2, percentage: 90,
+          days: [],
+        },
+      });
+      expect(calls.find((c) => c.path === '/agent/attendance/trend')!.query).toMatchObject({
+        from: '2026-09-21', to: '2026-09-24', classId: '9', sectionId: '2',
+      });
+    });
+
+    it('reports no figures when no attendance was marked in the range', async () => {
+      const { r } = await call('attendance_trend', {}, {
+        'GET /agent/attendance/trend': {
+          scope: 'Whole school', from: '2026-09-18', to: '2026-09-24', daysMarked: 0, daysNotMarked: 6, percentage: null,
+          days: [{ date: '2026-09-24', marked: false }],
+        },
+      });
+      expect(text(r)).toBe('Whole school, Fri 18 Sep to Thu 24 Sep: no attendance marked on any day, so there are no figures.');
+    });
+
+    it('says when no exam marks exist rather than inventing results', async () => {
+      const { r } = await call('exam_results', { class: '6B' }, {
+        'GET /agent/exams/results': { scope: 'Class 6-B', session: '2026-2027', exam: null, exams: [] },
+      });
+      expect(text(r)).toBe('Class 6-B: no exam marks entered this session (2026-2027).');
+    });
+
+    it('summarises one exam and names the others', async () => {
+      const { r, calls } = await call('exam_results', { exam: 'SA1', subject: 'maths' }, {
+        'GET /agent/exams/results': {
+          scope: 'Whole school', session: '2026-2027', exam: 'SA1', exams: ['SA1', 'FA1'], students: 40, average: 71.5,
+          studentsWithAFail: 3, subjects: [], classes: [], top: [], failed: [],
+        },
+      });
+      const q = calls.find((c) => c.path === '/agent/exams/results')!.query;
+      expect(q.exam).toBe('SA1');
+      expect(q.subjectId).toBeDefined();
+      expect(text(r).split('\n')[0]).toBe('SA1, Whole school: 40 students with marks, average 71.5%; 3 failed at least one subject. Other exams with marks: FA1.');
+    });
+
+    it('counts students on leave and flags unapproved requests', async () => {
+      const { r } = await call('on_leave', {}, {
+        'GET /agent/leaves/on': {
+          date: '2026-09-24',
+          students: { approved: 2, pendingApproval: 1, list: [{ name: 'Riya Sharma', class: 'Class 6-B' }] },
+        },
+      });
+      expect(text(r).split('\n')[0]).toBe('Thu 24 Sep: 2 students on approved leave (1 more request not yet approved).');
+    });
+
+    it('lists circulars matching a word', async () => {
+      const { r, calls } = await call('circulars', { search: 'PTM' }, {
+        'GET /agent/circulars': { more: false, circulars: [{ title: 'PTM on Saturday', date: '2026-09-20' }] },
+      });
+      expect(calls.find((c) => c.path === '/agent/circulars')!.query.q).toBe('PTM');
+      expect(text(r)).toMatch(/^1 circular matching "PTM"\./);
+    });
+  });
+
   it('turns a credit-exhausted backend answer into a plain message', async () => {
     fakeBackend(makeContext());
     vi.mocked(fetch).mockImplementation(async (url: any) =>

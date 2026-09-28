@@ -27,21 +27,29 @@ The MCP server holds no secrets and no database. It decodes the agent token (wit
 
 ## Tools
 
-Each tool is listed only if the user's role and the school's enabled modules allow it. A teacher sees about 21 tools; a super-admin without a staff profile sees 19.
+Each tool is listed only if the user's role and the school's enabled modules allow it. A teacher sees about 27 tools; a super-admin without a staff profile sees 25.
+
+Every result's first line states the totals (students present, enrolled, averages), so the model quotes a figure instead of adding up rows. Data not entered yet — attendance not marked, no exam marks — is reported as such, never as zero.
 
 | Tool | What it answers / does |
 |---|---|
 | `daily_briefing` | "What's happening today?": attendance registers taken or pending, staff attendance, pending leave requests, holidays, exams, events, birthdays |
+| `school_overview` | "How many students / staff / classes?": totals, boys and girls, strength per class-section, staff by designation |
+| `class_info` | A class-section's class teacher, subject teachers, strength and (optionally) its roll |
 | `find_students` | Search by name, admission number or roll number. Tolerates spoken names and misspellings. |
 | `student_profile` | One student, with optional attendance, exam marks, leaves, homework, fee status and contact details |
 | `class_attendance` | One class-section on a day: taken or not, counts, who was absent |
 | `attendance_register` | All classes on a day, e.g. "which classes haven't marked attendance?" |
+| `attendance_trend` | Attendance day by day for a period ("this week", "last month") for the school or a class; days nobody marked are listed |
 | `low_attendance` | Students below a percentage over a period |
 | `find_staff` / `staff_attendance` | Staff lookup; who is present, absent, on leave or not marked |
 | `pending_leaves` | Student and staff leave requests waiting on this user |
+| `on_leave` | Students (and, for admins, staff) on approved leave on a day |
+| `exam_results` | One exam for a class or the school: average, subject averages, failures, toppers |
 | `fee_status` | **Read-only** dues and collection for a student, a class or the school |
 | `homework_list` | Homework given to a class, or set by me |
 | `school_calendar` | Holidays, exam papers and events in a date range |
+| `circulars` | Recent circulars and notices, optionally matching words |
 | `my_leaves` / `my_attendance` | The user's own leave balance and attendance |
 | `assistant_usage` | Credits used and left (admins also see a breakdown by person and by tool) |
 | `my_context` | Roles, capabilities and school reference data. Rarely needed. |
